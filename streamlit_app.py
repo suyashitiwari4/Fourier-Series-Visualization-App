@@ -1,20 +1,14 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
+import sounddevice as sd
+import soundfile as sf
 import io
 from scipy.fft import fft, fftfreq
 from scipy import signal as sp_signal
 
 # Set matplotlib style for better aesthetics
 plt.style.use('dark_background')
-
-# Check for audio dependencies. If they're not available, disable the recorder tab.
-try:
-    import sounddevice as sd
-    import soundfile as sf
-    can_record = True
-except (ImportError, OSError):
-    can_record = False
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(page_title="🎶 Fourier Series Visualization", layout="wide")
@@ -164,6 +158,9 @@ with tab_info:
 
     Each harmonic is a sine or cosine wave with a frequency that is an integer multiple of the original signal's fundamental frequency. The "recipe" for reconstructing the original signal is given by the coefficients of these harmonics.
 
+    ### How This App Works
+    The application is divided into four main functional parts: Recorder, Function Generator, Fourier Analysis, and Comparison.
+
     #### Trigonometric Fourier Series
     This form represents the signal s(t) as a sum of sines and cosines:
     $$
@@ -192,36 +189,32 @@ with tab_info:
 # ---------- TAB 2: RECORDER ----------
 with tab_recorder:
     st.subheader("🎙 Audio Recorder")
+    dur = st.slider("Recording Duration (seconds)", 1, 10, 5)
     
-    if can_record:
-        dur = st.slider("Recording Duration (seconds)", 1, 10, 5)
-        
-        if st.button("▶ Start Recording"):
-            audio = record_audio(duration=dur, fs=st.session_state["fs"])
-            st.session_state["audio_data"] = audio
-            st.session_state["fs"] = 44100 # Reset fs to default for recording
-            st.session_state["signal_source"] = "recorder"
-            if "fundamental_freq" in st.session_state:
-                del st.session_state["fundamental_freq"]
-            st.success("✅ Recording finished and ready for analysis!")
+    if st.button("▶ Start Recording"):
+        audio = record_audio(duration=dur, fs=st.session_state["fs"])
+        st.session_state["audio_data"] = audio
+        st.session_state["fs"] = 44100 # Reset fs to default for recording
+        st.session_state["signal_source"] = "recorder"
+        if "fundamental_freq" in st.session_state:
+            del st.session_state["fundamental_freq"]
+        st.success("✅ Recording finished and ready for analysis!")
 
-        if st.session_state["audio_data"] is not None and st.session_state.get("signal_source") == "recorder":
-            st.audio(play_audio(st.session_state["audio_data"], st.session_state["fs"]), format="audio/wav")
-            
-            st.markdown("### 📈 Recorded Waveform")
-            fig, ax = plt.subplots(figsize=(10, 4))
-            data = st.session_state["audio_data"]
-            fs = st.session_state["fs"]
-            t = np.linspace(0, len(data)/fs, len(data), endpoint=False)
-            ax.plot(t, data, color="#00ffe1")
-            ax.set_title("Audio Signal")
-            ax.set_xlabel("Time (s)")
-            ax.set_ylabel("Amplitude")
-            plt.tight_layout()
-            st.pyplot(fig)
-    else:
-        st.warning("⚠️ Recording is not available in this environment. ")
-        st.info("This Streamlit app is running on a server that does not have access to a microphone. Please use the 'Function Generator' tab to create a signal for analysis.")
+    if st.session_state["audio_data"] is not None and st.session_state.get("signal_source") == "recorder":
+        st.audio(play_audio(st.session_state["audio_data"], st.session_state["fs"]), format="audio/wav")
+        
+        st.markdown("### 📈 Recorded Waveform")
+        fig, ax = plt.subplots(figsize=(10, 4))
+        data = st.session_state["audio_data"]
+        fs = st.session_state["fs"]
+        t = np.linspace(0, len(data)/fs, len(data), endpoint=False)
+        ax.plot(t, data, color="#00ffe1")
+        ax.set_title("Audio Signal")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Amplitude")
+        plt.tight_layout()
+        st.pyplot(fig)
+
 
 # ---------- TAB 3: FUNCTION GENERATOR ----------
 with tab_generator:
@@ -255,8 +248,8 @@ with tab_generator:
              if "fundamental_freq" in st.session_state:
                  del st.session_state["fundamental_freq"]
         else:
-            t, generated_signal = func_map[waveform_type](gen_amp, gen_freq, gen_dur, gen_fs)
-            st.session_state["fundamental_freq"] = gen_freq
+             t, generated_signal = func_map[waveform_type](gen_amp, gen_freq, gen_dur, gen_fs)
+             st.session_state["fundamental_freq"] = gen_freq
 
         st.session_state["audio_data"] = generated_signal
         st.session_state["fs"] = gen_fs
@@ -272,8 +265,7 @@ with tab_generator:
         plt.tight_layout()
         st.pyplot(fig)
         
-        if can_record:
-            st.audio(play_audio(generated_signal, gen_fs), format="audio/wav")
+        st.audio(play_audio(generated_signal, gen_fs), format="audio/wav")
         st.success("✅ Signal generated and ready for analysis!")
 
 
