@@ -4,3 +4,4 @@ matplotlib
 sounddevice
 soundfile
 scipy
+io
