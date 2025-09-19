@@ -164,9 +164,6 @@ with tab_info:
 
     Each harmonic is a sine or cosine wave with a frequency that is an integer multiple of the original signal's fundamental frequency. The "recipe" for reconstructing the original signal is given by the coefficients of these harmonics.
 
-    ### How This App Works
-    The application is divided into four main functional parts: Recorder, Function Generator, Fourier Analysis, and Comparison.
-
     #### Trigonometric Fourier Series
     This form represents the signal s(t) as a sum of sines and cosines:
     $$
@@ -223,7 +220,7 @@ with tab_recorder:
             plt.tight_layout()
             st.pyplot(fig)
     else:
-        st.warning("⚠️ Recording is not available in this environment.")
+        st.warning("⚠️ Recording is not available in this environment. ")
         st.info("This Streamlit app is running on a server that does not have access to a microphone. Please use the 'Function Generator' tab to create a signal for analysis.")
 
 # ---------- TAB 3: FUNCTION GENERATOR ----------
