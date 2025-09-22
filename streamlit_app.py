@@ -1,20 +1,11 @@
 import streamlit as st
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import sounddevice as sd
+import soundfile as sf
 import io
-from scipy.fft import fft, fftfreq
 from scipy import signal as sp_signal
-
-# Check for audio dependencies. If they're not available, disable the recorder tab.
-try:
-    import sounddevice as sd
-    import soundfile as sf
-    can_record = True
-except (ImportError, OSError):
-    can_record = False
-
-# Set matplotlib style for better aesthetics
-plt.style.use('dark_background')
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(page_title="🎶 Fourier Series Visualization", layout="wide")
@@ -104,34 +95,27 @@ def generate_square_wave(amp, freq, duration, fs):
 
 def generate_triangular_wave(amp, freq, duration, fs):
     t = np.linspace(0, duration, int(fs * duration), endpoint=False)
-    # 0.5 width for a symmetric triangular wave
-    return t, amp * sp_signal.sawtooth(2 * np.pi * freq * t, 0.5) # type: ignore
+    return t, amp * sp_signal.sawtooth(2 * np.pi * freq * t, 0.5)
 
 def generate_impulse(duration, fs):
     t = np.linspace(0, duration, int(fs * duration), endpoint=False)
     impulse = np.zeros_like(t)
-    impulse[0] = 1.0  # A single point impulse at the beginning
+    impulse[0] = 1.0
     return t, impulse
 
 # --- Fourier Calculation Functions ---
 def trig_coeff(signal, n_max, T, t):
-    """Calculate the coefficients for the trigonometric Fourier series."""
     a0 = np.mean(signal)
     a = np.zeros(n_max + 1)
     b = np.zeros(n_max + 1)
     w0 = 2 * np.pi / T
-    # Ensure dt is calculated correctly even for single-period slices
-    if len(t) > 1:
-        dt = t[1] - t[0]
-    else:
-        dt = T / len(signal) # Fallback for single sample
+    dt = t[1] - t[0] if len(t) > 1 else T / len(signal)
     for n in range(1, n_max + 1):
         a[n] = (2.0 / T) * np.sum(signal * np.cos(n * w0 * t)) * dt
         b[n] = (2.0 / T) * np.sum(signal * np.sin(n * w0 * t)) * dt
     return a0, a, b
 
 def trig_recon(t, a0, a, b, T):
-    """Reconstruct a signal from trigonometric Fourier series coefficients."""
     w0 = 2 * np.pi / T
     s = (a0 / 2) * np.ones_like(t)
     for n in range(1, len(a)):
@@ -139,16 +123,47 @@ def trig_recon(t, a0, a, b, T):
     return s
 
 def exp_coeff(signal, n_max, T, t):
-    """Calculate the coefficients for the exponential Fourier series."""
     coeffs = np.zeros(2 * n_max + 1, dtype=complex)
     w0 = 2 * np.pi / T
-    if len(t) > 1:
-        dt = t[1] - t[0]
-    else:
-        dt = T / len(signal)
+    dt = t[1] - t[0] if len(t) > 1 else T / len(signal)
     for i, n in enumerate(range(-n_max, n_max + 1)):
         coeffs[i] = (1.0 / T) * np.sum(signal * np.exp(-1j * n * w0 * t)) * dt
     return coeffs
+
+# --- Plotting Functions ---
+def plot_waveform(t, data, title):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=t, y=data, mode='lines', line=dict(color='#00ffe1')))
+    fig.update_layout(
+        title=title,
+        xaxis_title="Time (s)",
+        yaxis_title="Amplitude",
+        template='plotly_dark',
+        margin=dict(l=20, r=20, t=40, b=20)
+    )
+    return fig
+
+def create_stem_plot(n_vals, coeffs_part, title, color):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=n_vals, y=coeffs_part,
+        mode='markers',
+        marker=dict(color=color, size=6)
+    ))
+    for i in range(len(n_vals)):
+        fig.add_shape(
+            type='line',
+            x0=n_vals[i], y0=0, x1=n_vals[i], y1=coeffs_part[i],
+            line=dict(color=color, width=2)
+        )
+    fig.update_layout(
+        title=title,
+        xaxis_title="n",
+        yaxis_title="Amplitude",
+        template='plotly_dark',
+        margin=dict(l=20, r=20, t=40, b=20)
+    )
+    return fig
 
 # ---------- TABS LAYOUT ----------
 tab_info, tab_recorder, tab_generator, tab_analysis, tab_comparison = st.tabs(["ℹ Information", "🎤 Recorder", "🎹 Function Generator", "📊 Fourier Analysis", "⚖ Comparison"])
@@ -172,11 +187,7 @@ with tab_info:
     $$
     s(t) = \\frac{a_0}{2} + \sum_{n=1}^{\infty} [a_n \cos(n \omega_0 t) + b_n \sin(n \omega_0 t)]
     $$
-    Where:
-    - $\omega_0 = 2\pi / T$ is the fundamental angular frequency of the signal.
-    - $a_0$ is the DC offset (the average value of the signal).
-    - $a_n$ and $b_n$ are the coefficients that determine the amplitude of each cosine and sine harmonic.
-
+    
     #### Exponential Fourier Series
     This is a more compact form using complex exponentials:
     $$
@@ -186,56 +197,43 @@ with tab_info:
 
     ### Applications of This Visualization Tool
     This tool serves several practical and educational purposes:
-    - Educational Tool: For students of engineering, physics, and mathematics, this app provides an intuitive, hands-on way to grasp how the Fourier series works. Seeing the reconstruction improve as more terms are added solidifies the concept.
-    - Audio Synthesis: The core principle of additive synthesis is building complex sounds by adding sine waves. This tool is a basic additive synthesizer; by analyzing a sound, you can see the 'recipe' of sine/cosine waves needed to recreate it.
-    - Understanding Audio Effects: Visualizing the frequency spectrum (via exponential coefficients) helps in understanding how filters and equalizers work. An EQ boosts or cuts the amplitudes of specific frequency components ($c_n$).
-    - Signal Analysis: For any recorded signal, you can immediately see its harmonic content. For example, you can see the rich harmonics of a square wave versus the single pure tone of a sine wave.
+    - *Educational Tool:* For students of engineering, physics, and mathematics, this app provides an intuitive, hands-on way to grasp how the Fourier series works.
+    - *Audio Synthesis:* The core principle of additive synthesis is building complex sounds by adding sine waves. This tool is a basic additive synthesizer.
+    - *Understanding Audio Effects:* Visualizing the frequency spectrum helps in understanding how filters and equalizers (EQ) work.
+    - *Signal Analysis:* For any recorded signal, you can immediately see its harmonic content.
     """)
 
 # ---------- TAB 2: RECORDER ----------
 with tab_recorder:
     st.subheader("🎙 Audio Recorder")
+    dur = st.slider("Recording Duration (seconds)", 1, 10, 5)
     
-    if can_record:
-        dur = st.slider("Recording Duration (seconds)", 1, 10, 5)
-        
-        if st.button("▶ Start Recording"):
-            audio = record_audio(duration=dur, fs=st.session_state["fs"])
-            st.session_state["audio_data"] = audio
-            st.session_state["fs"] = 44100 # Reset fs to default for recording
-            st.session_state["signal_source"] = "recorder"
-            if "fundamental_freq" in st.session_state:
-                del st.session_state["fundamental_freq"]
-            st.success("✅ Recording finished and ready for analysis!")
+    if st.button("▶ Start Recording"):
+        audio = record_audio(duration=dur, fs=st.session_state["fs"])
+        st.session_state["audio_data"] = audio
+        st.session_state["fs"] = 44100 # Reset fs to default
+        st.session_state["signal_source"] = "recorder"
+        if "fundamental_freq" in st.session_state:
+            del st.session_state["fundamental_freq"]
+        st.success("✅ Recording finished and ready for analysis!")
 
-        if st.session_state["audio_data"] is not None and st.session_state.get("signal_source") == "recorder":
-            st.audio(play_audio(st.session_state["audio_data"], st.session_state["fs"]), format="audio/wav")
-            
-            st.markdown("### 📈 Recorded Waveform")
-            fig, ax = plt.subplots(figsize=(10, 4))
-            data = st.session_state["audio_data"]
-            fs = st.session_state["fs"]
-            t = np.linspace(0, len(data)/fs, len(data), endpoint=False)
-            ax.plot(t, data, color="#00ffe1")
-            ax.set_title("Audio Signal")
-            ax.set_xlabel("Time (s)")
-            ax.set_ylabel("Amplitude")
-            plt.tight_layout()
-            st.pyplot(fig)
-    else:
-        st.warning("⚠️ Recording is not available in this environment.") 
-        st.info("This Streamlit app is running on a server that does not have access to a microphone. Please use the 'Function Generator' tab to create a signal for analysis.")
+    if st.session_state.get("audio_data") is not None and st.session_state.get("signal_source") == "recorder":
+        st.audio(play_audio(st.session_state["audio_data"], st.session_state["fs"]), format="audio/wav")
+        
+        st.markdown("### 📈 Recorded Waveform")
+        data = st.session_state["audio_data"]
+        fs = st.session_state["fs"]
+        t = np.linspace(0, len(data)/fs, len(data), endpoint=False)
+        fig = plot_waveform(t, data, "Recorded Audio Signal")
+        st.plotly_chart(fig, use_container_width=True)
+
 
 # ---------- TAB 3: FUNCTION GENERATOR ----------
 with tab_generator:
     st.subheader("🎹 Function Generator")
     st.markdown("<p style='color:#888;'>Create a perfect waveform for analysis</p>", unsafe_allow_html=True)
 
-    waveform_type = st.radio(
-        "Select Waveform Type",
-        ("Sine", "Cosine", "Square", "Triangular", "Impulse"),
-        horizontal=True
-    )
+    waveform_type = st.radio("Select Waveform Type", ("Sine", "Cosine", "Square", "Triangular", "Impulse"), horizontal=True)
 
     col1, col2 = st.columns(2)
     with col1:
@@ -246,17 +244,11 @@ with tab_generator:
         gen_fs = st.select_slider("Sampling Rate (Hz)", options=[8000, 16000, 44100, 48000], value=44100, key="gen_fs")
 
     if st.button("🎹 Generate Signal"):
-        func_map = {
-            "Sine": generate_sine_wave,
-            "Cosine": generate_cosine_wave,
-            "Square": generate_square_wave,
-            "Triangular": generate_triangular_wave,
-            "Impulse": generate_impulse
-        }
+        func_map = {"Sine": generate_sine_wave, "Cosine": generate_cosine_wave, "Square": generate_square_wave, "Triangular": generate_triangular_wave, "Impulse": generate_impulse}
+        
         if waveform_type == "Impulse":
-             t, generated_signal = func_map[waveform_type](gen_dur, gen_fs)
-             if "fundamental_freq" in st.session_state:
-                 del st.session_state["fundamental_freq"]
+            t, generated_signal = func_map[waveform_type](gen_dur, gen_fs)
+            if "fundamental_freq" in st.session_state: del st.session_state["fundamental_freq"]
         else:
             t, generated_signal = func_map[waveform_type](gen_amp, gen_freq, gen_dur, gen_fs)
             st.session_state["fundamental_freq"] = gen_freq
@@ -266,17 +258,11 @@ with tab_generator:
         st.session_state["signal_source"] = "generator"
         
         st.markdown(f"### 📈 Generated {waveform_type} Wave")
-        fig, ax = plt.subplots(figsize=(10, 4))
         plot_samples = min(len(t), int(0.05 * gen_fs))
-        ax.plot(t[:plot_samples], generated_signal[:plot_samples], color="#00ffe1")
-        ax.set_title(f"Generated {waveform_type} Signal")
-        ax.set_xlabel("Time (s)")
-        ax.set_ylabel("Amplitude")
-        plt.tight_layout()
-        st.pyplot(fig)
+        fig = plot_waveform(t[:plot_samples], generated_signal[:plot_samples], f"Generated {waveform_type} Signal")
+        st.plotly_chart(fig, use_container_width=True)
         
-        if can_record:
-            st.audio(play_audio(generated_signal, gen_fs), format="audio/wav")
+        st.audio(play_audio(generated_signal, gen_fs), format="audio/wav")
         st.success("✅ Signal generated and ready for analysis!")
 
 
@@ -284,38 +270,23 @@ with tab_generator:
 with tab_analysis:
     st.subheader("📊 Fourier Analysis")
 
-    if st.session_state["audio_data"] is None:
+    if st.session_state.get("audio_data") is None:
         st.info("First, 🎤 record audio or 🎹 generate a signal.")
     else:
         data = st.session_state["audio_data"]
         fs = st.session_state["fs"]
         
-        if st.session_state.get("signal_source") == "generator" and "fundamental_freq" in st.session_state:
-            T = 1.0 / st.session_state["fundamental_freq"]
-        else:
-            T = len(data) / fs
+        T = 1.0 / st.session_state["fundamental_freq"] if st.session_state.get("signal_source") == "generator" and "fundamental_freq" in st.session_state else len(data) / fs
         
         t_full = np.linspace(0, len(data)/fs, len(data), endpoint=False)
-        plot_samples = min(len(t_full), int(0.05 * fs)) 
+        plot_samples = min(len(t_full), int(0.05 * fs))
 
         st.markdown("### 📈 Input Signal Waveform")
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(t_full[:plot_samples], data[:plot_samples], color="#00ffe1")
-        ax.set_title("Input Signal (Zoomed In)")
-        ax.set_xlabel("Time (s)")
-        ax.set_ylabel("Amplitude")
-        plt.tight_layout()
-        st.pyplot(fig)
+        fig = plot_waveform(t_full[:plot_samples], data[:plot_samples], "Input Signal (Zoomed In)")
+        st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("---")
-
-        view_mode = st.radio(
-            "Select Fourier Analysis Type:",
-            ("Trigonometric (Reconstruction)", "Exponential (Coefficients)"),
-            horizontal=True
-        )
-
-        st.markdown("### 🎛 Parameters")
+        view_mode = st.radio("Select Fourier Analysis Type:", ("Trigonometric (Reconstruction)", "Exponential (Coefficients)"), horizontal=True)
         N = st.slider("Number of Fourier Terms (N)", 1, 200, 20)
         
         if view_mode == "Trigonometric (Reconstruction)":
@@ -324,27 +295,21 @@ with tab_analysis:
             recon = trig_recon(t_full, a0, a, b, T)
             w0 = 2 * np.pi / T
 
-            fig2, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
+            fig2 = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.1, subplot_titles=("Original Signal vs. Fourier Reconstruction", f"First {min(N, 5)} Harmonic Components"))
             
-            ax1.plot(t_full[:plot_samples], data[:plot_samples], 'w--', label="Original Signal", alpha=0.7)
-            ax1.plot(t_full[:plot_samples], recon[:plot_samples], color="#ff4081", label=f"Reconstruction (N={N})")
-            ax1.set_title("Original Signal vs. Fourier Reconstruction")
-            ax1.set_ylabel("Amplitude")
-            ax1.legend()
-            ax1.grid(True, alpha=0.2)
-            
+            fig2.add_trace(go.Scatter(x=t_full[:plot_samples], y=data[:plot_samples], mode='lines', name='Original', line=dict(color='white', dash='dash')), row=1, col=1)
+            fig2.add_trace(go.Scatter(x=t_full[:plot_samples], y=recon[:plot_samples], mode='lines', name=f'Reconstruction (N={N})', line=dict(color='#ff4081')), row=1, col=1)
+
             num_harmonics_to_show = min(N, 5)
-            colors = plt.cm.viridis(np.linspace(0, 1, num_harmonics_to_show)) # type: ignore
             for n in range(1, num_harmonics_to_show + 1):
                 harmonic = a[n] * np.cos(n * w0 * t_full) + b[n] * np.sin(n * w0 * t_full)
-                ax2.plot(t_full[:plot_samples], harmonic[:plot_samples], label=f'Harmonic {n}', color=colors[n-1], alpha=0.9)
-            ax2.set_title(f"First {num_harmonics_to_show} Harmonic Components")
-            ax2.set_xlabel("Time (s)")
-            ax2.set_ylabel("Amplitude")
-            ax2.legend()
-            ax2.grid(True, alpha=0.2)
-            plt.tight_layout()
-            st.pyplot(fig2)
+                fig2.add_trace(go.Scatter(x=t_full[:plot_samples], y=harmonic[:plot_samples], name=f'Harmonic {n}', mode='lines', line=dict(width=2)), row=2, col=1)
+            
+            fig2.update_layout(template='plotly_dark', margin=dict(l=20, r=20, t=60, b=20), height=600)
+            fig2.update_yaxes(title_text="Amplitude", row=1, col=1)
+            fig2.update_yaxes(title_text="Amplitude", row=2, col=1)
+            fig2.update_xaxes(title_text="Time (s)", row=2, col=1)
+            st.plotly_chart(fig2, use_container_width=True)
 
         elif view_mode == "Exponential (Coefficients)":
             st.markdown("### 🧠 Exponential Fourier Series Coefficients")
@@ -353,139 +318,79 @@ with tab_analysis:
             
             col_real, col_imag = st.columns(2)
             with col_real:
-                figR, axR = plt.subplots(figsize=(6, 4))
-                axR.stem(n_vals, np.real(coeffs), linefmt='#00ffe1', markerfmt='o', basefmt=" ")
-                axR.set_title("$Re(c_n)$")
-                axR.set_xlabel("n")
-                axR.set_ylabel("Amplitude")
-                plt.tight_layout()
-                st.pyplot(figR)
-            
+                figR = create_stem_plot(n_vals, np.real(coeffs), "$Re(c_n)$", '#00ffe1')
+                st.plotly_chart(figR, use_container_width=True)
             with col_imag:
-                figI, axI = plt.subplots(figsize=(6, 4))
-                axI.stem(n_vals, np.imag(coeffs), linefmt='#ff4081', markerfmt='o', basefmt=" ")
-                axI.set_title("$Im(c_n)$")
-                axI.set_xlabel("n")
-                axI.set_ylabel("Amplitude")
-                plt.tight_layout()
-                st.pyplot(figI)
+                figI = create_stem_plot(n_vals, np.imag(coeffs), "$Im(c_n)$", '#ff4081')
+                st.plotly_chart(figI, use_container_width=True)
 
 # ---------- TAB 5: COMPARISON ----------
 with tab_comparison:
     st.subheader("⚖ Compare Fourier Representations")
     st.markdown("<p style='color:#888;'>See how a different number of Fourier terms affects the analysis.</p>", unsafe_allow_html=True)
 
-    # --- Comparison Setup ---
-    compare_waveform = st.selectbox(
-        "Select a waveform to compare:",
-        ("Sine", "Cosine", "Square", "Triangular"),
-        key="compare_select"
-    )
-    
-    compare_view_mode = st.radio(
-        "Select Analysis Type for Comparison:",
-        ("Trigonometric (Reconstruction)", "Exponential (Coefficients)"),
-        horizontal=True, key="compare_radio"
-    )
+    compare_waveform = st.selectbox("Select a waveform to compare:", ("Sine", "Cosine", "Square", "Triangular"), key="compare_select")
+    compare_view_mode = st.radio("Select Analysis Type for Comparison:", ("Trigonometric (Reconstruction)", "Exponential (Coefficients)"), horizontal=True, key="compare_radio")
 
     col_n1, col_n2 = st.columns(2)
-    with col_n1:
-        compare_N1 = st.slider("Number of Terms (N1)", 1, 100, 5, key="compare_N1")
-    with col_n2:
-        compare_N2 = st.slider("Number of Terms (N2)", 1, 100, 25, key="compare_N2")
+    with col_n1: compare_N1 = st.slider("Number of Terms (N1)", 1, 100, 5, key="compare_N1")
+    with col_n2: compare_N2 = st.slider("Number of Terms (N2)", 1, 100, 25, key="compare_N2")
 
-    # --- Comparison Execution ---
-    # Define standard parameters for a fair comparison
-    comp_amp = 1.0
-    comp_freq = 10
-    comp_dur = 1
-    comp_fs = 2000
+    comp_amp, comp_freq, comp_dur, comp_fs = 1.0, 10, 1, 2000
     comp_T = 1.0 / comp_freq
     
-    func_map = {
-        "Sine": generate_sine_wave, "Cosine": generate_cosine_wave,
-        "Square": generate_square_wave, "Triangular": generate_triangular_wave
-    }
-
+    func_map = {"Sine": generate_sine_wave, "Cosine": generate_cosine_wave, "Square": generate_square_wave, "Triangular": generate_triangular_wave}
     t, signal = func_map[compare_waveform](comp_amp, comp_freq, comp_dur, comp_fs)
-    plot_samples = int(2 * comp_fs / comp_freq) # Plot two periods
+    plot_samples = int(2 * comp_fs / comp_freq)
 
     col1, col2 = st.columns(2)
 
-    # --- Column 1 Plot (N1) ---
     with col1:
         st.markdown(f"#### Analysis with N = {compare_N1}")
         if compare_view_mode == "Trigonometric (Reconstruction)":
             a0, a, b = trig_coeff(signal, compare_N1, comp_T, t)
             recon = trig_recon(t, a0, a, b, comp_T)
-            fig, ax = plt.subplots(figsize=(5, 3))
-            ax.plot(t[:plot_samples], signal[:plot_samples], 'w--', alpha=0.7, label='Original')
-            ax.plot(t[:plot_samples], recon[:plot_samples], color="#00ffe1", label=f'N={compare_N1}')
-            ax.set_title(f"{compare_waveform} (N={compare_N1})")
-            ax.legend()
-            plt.tight_layout()
-            st.pyplot(fig)
-        else: # Exponential
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=t[:plot_samples], y=signal[:plot_samples], mode='lines', name='Original', line=dict(color='white', dash='dash')))
+            fig.add_trace(go.Scatter(x=t[:plot_samples], y=recon[:plot_samples], mode='lines', name=f'N={compare_N1}', line=dict(color='#00ffe1')))
+            fig.update_layout(title=f"{compare_waveform} (N={compare_N1})", template='plotly_dark', margin=dict(l=20, r=20, t=40, b=20), height=300)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
             coeffs = exp_coeff(signal, compare_N1, comp_T, t)
             n_vals = np.arange(-compare_N1, compare_N1 + 1)
-            fig, ax = plt.subplots(figsize=(5, 3))
-            ax.stem(n_vals, np.abs(coeffs), linefmt='#00ffe1', markerfmt='o', basefmt=" ")
-            ax.set_title(f"Magnitude $|c_n|$ (N={compare_N1})")
-            st.pyplot(fig)
+            fig = create_stem_plot(n_vals, np.abs(coeffs), f"Magnitude $|c_n|$ (N={compare_N1})", '#00ffe1')
+            fig.update_layout(height=300)
+            st.plotly_chart(fig, use_container_width=True)
 
-    # --- Column 2 Plot (N2) ---
     with col2:
         st.markdown(f"#### Analysis with N = {compare_N2}")
         if compare_view_mode == "Trigonometric (Reconstruction)":
             a0, a, b = trig_coeff(signal, compare_N2, comp_T, t)
             recon = trig_recon(t, a0, a, b, comp_T)
-            fig, ax = plt.subplots(figsize=(5, 3))
-            ax.plot(t[:plot_samples], signal[:plot_samples], 'w--', alpha=0.7, label='Original')
-            ax.plot(t[:plot_samples], recon[:plot_samples], color="#ff4081", label=f'N={compare_N2}')
-            ax.set_title(f"{compare_waveform} (N={compare_N2})")
-            ax.legend()
-            plt.tight_layout()
-            st.pyplot(fig)
-        else: # Exponential
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=t[:plot_samples], y=signal[:plot_samples], mode='lines', name='Original', line=dict(color='white', dash='dash')))
+            fig.add_trace(go.Scatter(x=t[:plot_samples], y=recon[:plot_samples], mode='lines', name=f'N={compare_N2}', line=dict(color='#ff4081')))
+            fig.update_layout(title=f"{compare_waveform} (N={compare_N2})", template='plotly_dark', margin=dict(l=20, r=20, t=40, b=20), height=300)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
             coeffs = exp_coeff(signal, compare_N2, comp_T, t)
             n_vals = np.arange(-compare_N2, compare_N2 + 1)
-            fig, ax = plt.subplots(figsize=(5, 3))
-            ax.stem(n_vals, np.abs(coeffs), linefmt='#ff4081', markerfmt='o', basefmt=" ")
-            ax.set_title(f"Magnitude $|c_n|$ (N={compare_N2})")
-            st.pyplot(fig)
+            fig = create_stem_plot(n_vals, np.abs(coeffs), f"Magnitude $|c_n|$ (N={compare_N2})", '#ff4081')
+            fig.update_layout(height=300)
+            st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
-    # --- Explanation Section ---
     with st.expander("📖 Analysis and Interpretation"):
-        st.markdown(f"""
-        ### Waveform Efficiency and Accuracy vs. Number of Terms (N)
-
-        When we analyze how well a Fourier series represents a signal, *efficiency* refers to how few terms (a small 'N') are needed to get an *accurate* reconstruction. The key factor determining this is the *smoothness* of the waveform.
-
-        Here's a ranking from most to least efficient:
-
-        - *Sine/Cosine Waves (Most Efficient & Accurate):*
-            - A pure sine or cosine wave is perfectly and completely represented by just *one* Fourier term (N=1). They are the fundamental building blocks of the series itself, so they are spectrally pure and require the minimum possible terms for perfect accuracy.
-
-        - *Triangular Wave (Moderately Efficient & Accurate):*
-            - This wave is continuous, but its slope changes abruptly at the peaks (its derivative is discontinuous). Because it's smoother than a square wave, its Fourier coefficients decrease more quickly. This means you can get a reasonably accurate approximation with a moderate number of terms (e.g., N=10 to 20).
-
-        - *Square Wave (Least Efficient & Accurate):*
-            - This is the least efficient of the group because it has instantaneous jumps (discontinuities). To approximate these sharp vertical edges, the Fourier series needs a large number of high-frequency harmonics.
-            - For any given 'N', the square wave reconstruction will be the least accurate. You'll notice that even with a high 'N', there are persistent overshoots and "ringing" at the corners. This famous artifact is known as the *Gibbs Phenomenon*.
-
-        *Conclusion:* For a fixed number of terms 'N', the accuracy of the reconstruction is highest for the smoothest signals. Conversely, to achieve a certain level of accuracy, a smoother signal requires a much smaller 'N' than a signal with sharp corners or jumps.
+        st.markdown("""
+        ### Waveform Efficiency vs. Number of Terms (N)
+        Efficiency refers to how few terms (a small 'N') are needed to get an accurate reconstruction. The key factor is the smoothness of the waveform.
+        - *Sine/Cosine Waves (Most Efficient):* Perfectly represented by just one Fourier term (N=1).
+        - *Triangular Wave (Moderately Efficient):* Smoother than a square wave, its coefficients decrease quickly. A moderate 'N' gives a good approximation.
+        - *Square Wave (Least Efficient):* Has sharp jumps (discontinuities) that require a large number of high-frequency harmonics to approximate. Even with a high 'N', you see overshoots known as the Gibbs Phenomenon.
 
         ### Trigonometric vs. Exponential Fourier Analysis
-        Both forms of the Fourier series are mathematically equivalent and describe the same phenomenon, but they offer different perspectives.
-
-        - *Trigonometric Series (Reconstruction):*
-            - Pros: Highly intuitive. It directly shows how the signal is built from sine and cosine waves, which are easy to visualize. The coefficients ($a_n, b_n$) are real numbers representing the amplitude of each component. It's excellent for educational purposes and understanding the concept of superposition.
-            - Cons: Can be mathematically cumbersome with two sets of coefficients to manage.
+        - *Trigonometric Series (Reconstruction):* Highly intuitive. It directly shows how the signal is built from sine and cosine waves. Excellent for educational purposes.
+        - *Exponential Series (Coefficients):* Mathematically elegant and compact. It uses a single complex number ($c_n$) for each harmonic, containing both amplitude and phase. It is the standard for advanced signal processing and provides a direct view of the signal's frequency spectrum.
         
-        - *Exponential Series (Coefficients):*
-            - Pros: Mathematically elegant and compact. Each harmonic is represented by a single complex number ($c_n$) that contains both amplitude and phase information. It is the standard form used in advanced signal processing, control systems, and communications because the math is often simpler. It provides a direct view of the signal's frequency spectrum.
-            - Cons: Less intuitive for beginners, as it involves complex numbers and negative frequencies.
-
-        *Which is better?* Neither is universally "better"—the best choice depends on the application. For visualizing how a signal is built from real sinusoids, the *Trigonometric* form is superior. For mathematical analysis, filtering, and understanding the full frequency/phase spectrum, the *Exponential* form is the professional standard.
+        *Which is better?* For visualizing how a signal is built, the *Trigonometric* form is superior. For mathematical analysis and understanding the full frequency/phase spectrum, the *Exponential* form is the professional standard.
         """)
