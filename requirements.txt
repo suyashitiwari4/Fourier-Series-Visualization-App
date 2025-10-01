@@ -1,6 +1,6 @@
 streamlit
 numpy
-matplotlib
+plotly
 sounddevice
 soundfile
 scipy
